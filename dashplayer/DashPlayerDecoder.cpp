@@ -44,7 +44,7 @@ namespace android {
 
 DashPlayer::Decoder::Decoder(
         const sp<AMessage> &notify,
-        const sp<NativeWindowWrapper> &nativeWindow)
+        const sp<Surface> &nativeWindow)
     : mNotify(notify),
       mNativeWindow(nativeWindow),
       mLogLevel(0),
@@ -84,14 +84,16 @@ void DashPlayer::Decoder::onConfigure(const sp<AMessage> &format) {
     AString mime;
     CHECK(format->findString("mime", &mime));
 
+    /*
     sp<Surface> surface = NULL;
     if (mNativeWindow != NULL) {
         surface = mNativeWindow->getSurfaceTextureClient();
     }
+    */
 
     mComponentName = mime;
     mComponentName.append(" decoder");
-    DPD_MSG_HIGH("[%s] onConfigure (surface=%p)", mComponentName.c_str(), surface.get());
+    DPD_MSG_HIGH("[%s] onConfigure (surface=%p)", mComponentName.c_str(), mNativeWindow.get());
 
     mCodec = MediaCodec::CreateByType(mCodecLooper, mime.c_str(), false /* encoder */);
     if (mCodec == NULL) {
@@ -106,14 +108,14 @@ void DashPlayer::Decoder::onConfigure(const sp<AMessage> &format) {
     if (mNativeWindow != NULL) {
         // disconnect from surface as MediaCodec will reconnect
         err = native_window_api_disconnect(
-                surface.get(), NATIVE_WINDOW_API_MEDIA);
+                mNativeWindow.get(), NATIVE_WINDOW_API_MEDIA);
         // We treat this as a warning, as this is a preparatory step.
         // Codec will try to connect to the surface, which is where
         // any error signaling will occur.
         ALOGW_IF(err != OK, "failed to disconnect from surface: %d", err);
     }
     err = mCodec->configure(
-            format, surface, NULL /* crypto */, 0 /* flags */);
+            format, mNativeWindow, NULL /* crypto */, 0 /* flags */);
     if (err != OK) {
         DPD_MSG_ERROR("Failed to configure %s decoder (err=%d)", mComponentName.c_str(), err);
         handleError(err);
@@ -148,7 +150,7 @@ void DashPlayer::Decoder::onConfigure(const sp<AMessage> &format) {
  */
 void DashPlayer::Decoder::requestCodecNotification() {
     if (mCodec != NULL) {
-        sp<AMessage> reply = new AMessage(kWhatCodecNotify, id());
+        sp<AMessage> reply = new AMessage(kWhatCodecNotify, this);
         reply->setInt32("generation", mBufferGeneration);
         mCodec->requestActivityNotification(reply);
     }
@@ -170,7 +172,7 @@ void DashPlayer::Decoder::init() {
  *
  */
 void DashPlayer::Decoder::configure(const sp<MetaData> &meta) {
-    sp<AMessage> msg = new AMessage(kWhatConfigure, id());
+    sp<AMessage> msg = new AMessage(kWhatConfigure, this);
     sp<AMessage> format = makeFormat(meta);
     msg->setMessage("format", format);
     msg->post();
@@ -208,7 +210,7 @@ bool DashPlayer::Decoder::handleAnInputBuffer() {
 
     CHECK_LT(bufferIx, mInputBuffers.size());
 
-    sp<AMessage> reply = new AMessage(kWhatInputBufferFilled, id());
+    sp<AMessage> reply = new AMessage(kWhatInputBufferFilled, this);
     reply->setSize("buffer-ix", bufferIx);
     reply->setInt32("generation", mBufferGeneration);
 
@@ -384,7 +386,7 @@ bool DashPlayer::Decoder::handleAnOutputBuffer() {
     }
     // we do not expect CODECCONFIG or SYNCFRAME for decoder
 
-    sp<AMessage> reply = new AMessage(kWhatRenderBuffer, id());
+    sp<AMessage> reply = new AMessage(kWhatRenderBuffer, this);
     reply->setSize("buffer-ix", bufferIx);
     reply->setInt32("generation", mBufferGeneration);
 
@@ -462,7 +464,7 @@ void DashPlayer::Decoder::onShutdown() {
             // reconnect to surface as MediaCodec disconnected from it
             status_t error =
                     native_window_api_connect(
-                            mNativeWindow->getNativeWindow().get(),
+                            mNativeWindow.get(),
                             NATIVE_WINDOW_API_MEDIA);
             ALOGW_IF(error != NO_ERROR,
                     "[%s] failed to connect to native window, error=%d",
@@ -548,7 +550,7 @@ void DashPlayer::Decoder::onMessageReceived(const sp<AMessage> &msg) {
 }
 
 void DashPlayer::Decoder::signalFlush() {
-    (new AMessage(kWhatFlush, id()))->post();
+    (new AMessage(kWhatFlush, this))->post();
 }
 
 void DashPlayer::Decoder::signalResume() {
@@ -556,7 +558,7 @@ void DashPlayer::Decoder::signalResume() {
 }
 
 void DashPlayer::Decoder::initiateShutdown() {
-    (new AMessage(kWhatShutdown, id()))->post();
+    (new AMessage(kWhatShutdown,this))->post();
 }
 
 
